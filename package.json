@@ -1,0 +1,36 @@
+{
+  "name": "safeskill",
+  "version": "0.1.0",
+  "description": "One-click security audit for your MCP setup. One score, plain English, no CLI knowledge required.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "safeskill": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "scan": "node dist/cli.js",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "security",
+    "scanner",
+    "audit",
+    "skills",
+    "ai-safety"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
