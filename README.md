@@ -4,22 +4,23 @@
 
 One score. Plain English. No CLI knowledge required.
 
-SafeSkill scans your MCP skills and configuration for security issues and gives you a clear safety score (0-100) with plain-English explanations of every finding.
+## We Scanned the MCP Ecosystem
 
-```
-Overall Score: 62/100 YELLOW [############--------]
+We downloaded and scanned **3,093 MCP packages** from npm and the official MCP registry. The results:
 
-Found 7 security issues across 4 skills.
+- **858 packages (28%)** had at least one security finding
+- **397 packages (13%)** rated RED (score below 50)
+- **176 packages** scored a flat 0/100
 
-Skills you should remove:
-- sketchy-data-tool (Score: 15/100) — tries to read your SSH keys and send them to a server
-- crypto-helper (Score: 35/100) — contains a hardcoded crypto wallet address
+Cisco, 1Password, Snyk, and Bitdefender have all flagged MCP's lack of sandboxing and permissions as a serious risk. We built SafeSkill to let you check for yourself.
 
-Skills to review:
-- file-manager (Score: 65/100) — can run system commands on your computer
+Read the full analysis: [I Scanned 3,093 MCP Servers. Here's What I Found.](blog/i-scanned-every-mcp-server.md)
 
-Clean skills: weather, calculator, notes
-```
+## Try It Now
+
+**No install required.** Paste any npm package name into the web scanner:
+
+**[getsafeskill.vercel.app](https://getsafeskill.vercel.app)**
 
 ## Quick Start
 
@@ -33,8 +34,8 @@ Add SafeSkill to your MCP configuration and just ask your agent:
 {
   "mcpServers": {
     "safeskill": {
-      "command": "node",
-      "args": ["/path/to/safeskill/dist/index.js"]
+      "command": "npx",
+      "args": ["-y", "safeskill"]
     }
   }
 }
@@ -91,10 +92,25 @@ Each skill gets a score from 0-100:
 | Score | Rating | Meaning |
 |-------|--------|---------|
 | 80-100 | GREEN | No significant issues found |
-| 50-79 | YELLOW | Some concerns — review the findings |
-| 0-49 | RED | Serious issues — remove or replace this skill |
+| 50-79 | YELLOW | Some concerns, review the findings |
+| 0-49 | RED | Serious issues, remove or replace this skill |
 
 Scores are based on the number and severity of findings, with diminishing returns for repeated instances of the same issue.
+
+```
+Overall Score: 62/100 YELLOW [############--------]
+
+Found 7 security issues across 4 skills.
+
+Skills you should remove:
+- sketchy-data-tool (Score: 15/100) — tries to read your SSH keys and send them to a server
+- crypto-helper (Score: 35/100) — contains a hardcoded crypto wallet address
+
+Skills to review:
+- file-manager (Score: 65/100) — can run system commands on your computer
+
+Clean skills: weather, calculator, notes
+```
 
 ## Output Formats
 
@@ -105,7 +121,7 @@ Scores are based on the number and severity of findings, with diminishing return
 ## Building from Source
 
 ```bash
-git clone https://github.com/yourusername/safeskill.git
+git clone https://github.com/gabchess/safeskill.git
 cd safeskill
 npm install
 npm run build

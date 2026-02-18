@@ -4,6 +4,9 @@
   "description": "One-click security audit for your MCP setup. One score, plain English, no CLI knowledge required.",
   "type": "module",
   "main": "dist/index.js",
+  "files": [
+    "dist/"
+  ],
   "bin": {
     "safeskill": "dist/cli.js"
   },

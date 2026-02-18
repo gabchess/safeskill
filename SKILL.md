@@ -63,7 +63,7 @@ Then add:
 {
   "mcpServers": {
     "safeskill": {
-      "command": "safeskill-server"
+      "command": "safeskill"
     }
   }
 }
