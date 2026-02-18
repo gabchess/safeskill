@@ -1,23 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { scanSkill } from "@/lib/scanner/engine";
-import { execSync } from "node:child_process";
-import { mkdtempSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execSync } from "node:child_process";
+import { createGunzip } from "node:zlib";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createWriteStream } from "node:fs";
 
 export const maxDuration = 60;
 
 function sanitizePackageName(input: string): string | null {
-  // Accept npm package names: @scope/name or name
-  // Also accept github URLs: github.com/user/repo
   let cleaned = input.trim();
 
-  // Handle GitHub URLs
-  const ghMatch = cleaned.match(
-    /(?:https?:\/\/)?github\.com\/([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)/
-  );
-  if (ghMatch) {
-    return `github:${ghMatch[1]}`;
+  // Handle GitHub URLs — not supported in serverless, only npm
+  if (/github\.com/.test(cleaned)) {
+    return null;
   }
 
   // Strip leading https://www.npmjs.com/package/ if present
@@ -36,78 +35,100 @@ function sanitizePackageName(input: string): string | null {
   return null;
 }
 
+async function downloadAndExtract(
+  packageName: string,
+  workDir: string
+): Promise<string | null> {
+  // Get package metadata from npm registry
+  const metaRes = await fetch(
+    `https://registry.npmjs.org/${encodeURIComponent(packageName).replace("%40", "@")}`
+  );
+  if (!metaRes.ok) return null;
+
+  const meta = await metaRes.json();
+  const latest = meta["dist-tags"]?.latest;
+  if (!latest) return null;
+
+  const versionData = meta.versions?.[latest];
+  if (!versionData?.dist?.tarball) return null;
+
+  const tarballUrl = versionData.dist.tarball;
+
+  // Download tarball
+  const tarRes = await fetch(tarballUrl);
+  if (!tarRes.ok || !tarRes.body) return null;
+
+  const tgzPath = join(workDir, "package.tgz");
+  const nodeStream = Readable.fromWeb(tarRes.body as import("stream/web").ReadableStream);
+  await pipeline(nodeStream, createWriteStream(tgzPath));
+
+  // Extract using tar (available on Vercel's Amazon Linux)
+  try {
+    execSync(`tar xzf "${tgzPath}" -C "${workDir}"`, {
+      timeout: 15000,
+      stdio: "pipe",
+    });
+  } catch {
+    return null;
+  }
+
+  const packageDir = join(workDir, "package");
+  return existsSync(packageDir) ? packageDir : null;
+}
+
 export async function POST(req: NextRequest) {
   let body;
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid request body" },
+      { status: 400 }
+    );
   }
 
   const { target } = body;
   if (!target || typeof target !== "string") {
     return NextResponse.json(
-      { error: "Please provide a package name or GitHub URL." },
+      { error: "Please provide an npm package name." },
       { status: 400 }
     );
   }
 
-  const packageId = sanitizePackageName(target);
-  if (!packageId) {
+  if (/github\.com/.test(target)) {
     return NextResponse.json(
       {
         error:
-          "Invalid input. Please provide an npm package name (e.g. @modelcontextprotocol/server-filesystem) or a GitHub URL.",
+          "GitHub URLs are not supported in the web scanner. Please provide an npm package name instead.",
       },
       { status: 400 }
     );
   }
 
-  const workDir = mkdtempSync(join(tmpdir(), "safeskill-web-"));
+  const packageName = sanitizePackageName(target);
+  if (!packageName) {
+    return NextResponse.json(
+      {
+        error:
+          "Invalid package name. Use an npm package name like @modelcontextprotocol/server-filesystem",
+      },
+      { status: 400 }
+    );
+  }
+
+  const workDir = mkdtempSync(join(tmpdir(), "safeskill-"));
 
   try {
-    // Download the package
-    try {
-      execSync(`npm pack "${packageId}" --pack-destination "${workDir}" 2>/dev/null`, {
-        timeout: 30000,
-        stdio: "pipe",
-      });
-    } catch {
+    const packageDir = await downloadAndExtract(packageName, workDir);
+    if (!packageDir) {
       return NextResponse.json(
-        { error: `Could not download "${target}". Make sure the package name is correct.` },
+        {
+          error: `Could not download "${target}". Make sure the npm package name is correct.`,
+        },
         { status: 404 }
       );
     }
 
-    // Extract
-    const tarballs = execSync(`ls "${workDir}"/*.tgz 2>/dev/null`, {
-      encoding: "utf-8",
-      stdio: "pipe",
-    })
-      .trim()
-      .split("\n")
-      .filter(Boolean);
-
-    if (tarballs.length === 0) {
-      return NextResponse.json(
-        { error: "Package downloaded but could not be extracted." },
-        { status: 500 }
-      );
-    }
-
-    execSync(`tar xzf "${tarballs[0]}" -C "${workDir}" 2>/dev/null`, {
-      stdio: "pipe",
-    });
-
-    const packageDir = join(workDir, "package");
-    if (!existsSync(packageDir)) {
-      return NextResponse.json(
-        { error: "Package extracted but has unexpected structure." },
-        { status: 500 }
-      );
-    }
-
-    // Scan
     const result = await scanSkill(packageDir);
     result.skillName = target;
 
@@ -120,11 +141,10 @@ export async function POST(req: NextRequest) {
       scanDuration: result.scanDuration,
     });
   } finally {
-    // Cleanup
     try {
       rmSync(workDir, { recursive: true, force: true });
     } catch {
-      // ignore cleanup errors
+      // ignore
     }
   }
 }
