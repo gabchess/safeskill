@@ -1,13 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { scanSkill } from "@/lib/scanner/engine";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { execSync } from "node:child_process";
-import { createGunzip } from "node:zlib";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import { createWriteStream } from "node:fs";
+import { extract } from "tar";
 
 export const maxDuration = 60;
 
@@ -38,42 +34,45 @@ function sanitizePackageName(input: string): string | null {
 async function downloadAndExtract(
   packageName: string,
   workDir: string
-): Promise<string | null> {
+): Promise<{ path: string } | { error: string }> {
   // Get package metadata from npm registry
-  const metaRes = await fetch(
-    `https://registry.npmjs.org/${encodeURIComponent(packageName).replace("%40", "@")}`
-  );
-  if (!metaRes.ok) return null;
+  const registryUrl = `https://registry.npmjs.org/${encodeURIComponent(packageName).replace("%40", "@")}`;
+  const metaRes = await fetch(registryUrl);
+  if (!metaRes.ok) return { error: `Registry returned ${metaRes.status} for ${registryUrl}` };
 
   const meta = await metaRes.json();
   const latest = meta["dist-tags"]?.latest;
-  if (!latest) return null;
+  if (!latest) return { error: "No latest version found in dist-tags" };
 
   const versionData = meta.versions?.[latest];
-  if (!versionData?.dist?.tarball) return null;
+  if (!versionData?.dist?.tarball) return { error: `No tarball URL for version ${latest}` };
 
   const tarballUrl = versionData.dist.tarball;
 
   // Download tarball
   const tarRes = await fetch(tarballUrl);
-  if (!tarRes.ok || !tarRes.body) return null;
+  if (!tarRes.ok) return { error: `Tarball download failed: ${tarRes.status}` };
+  if (!tarRes.body) return { error: "Tarball response has no body" };
 
   const tgzPath = join(workDir, "package.tgz");
-  const nodeStream = Readable.fromWeb(tarRes.body as import("stream/web").ReadableStream);
-  await pipeline(nodeStream, createWriteStream(tgzPath));
 
-  // Extract using tar (available on Vercel's Amazon Linux)
+  // Write tarball to disk using arrayBuffer (more compatible than streams)
+  const arrayBuf = await tarRes.arrayBuffer();
+  writeFileSync(tgzPath, Buffer.from(arrayBuf));
+
+  // Extract tarball using tar npm package (no system tar needed)
   try {
-    execSync(`tar xzf "${tgzPath}" -C "${workDir}"`, {
-      timeout: 15000,
-      stdio: "pipe",
-    });
-  } catch {
-    return null;
+    await extract({ file: tgzPath, cwd: workDir });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { error: `tar extract failed: ${msg}` };
   }
 
   const packageDir = join(workDir, "package");
-  return existsSync(packageDir) ? packageDir : null;
+  if (!existsSync(packageDir)) {
+    return { error: "Extracted but no 'package' directory found" };
+  }
+  return { path: packageDir };
 }
 
 export async function POST(req: NextRequest) {
@@ -119,17 +118,17 @@ export async function POST(req: NextRequest) {
   const workDir = mkdtempSync(join(tmpdir(), "safeskill-"));
 
   try {
-    const packageDir = await downloadAndExtract(packageName, workDir);
-    if (!packageDir) {
+    const downloadResult = await downloadAndExtract(packageName, workDir);
+    if ("error" in downloadResult) {
       return NextResponse.json(
         {
-          error: `Could not download "${target}". Make sure the npm package name is correct.`,
+          error: `Could not download "${target}". ${downloadResult.error}`,
         },
         { status: 404 }
       );
     }
 
-    const result = await scanSkill(packageDir);
+    const result = await scanSkill(downloadResult.path);
     result.skillName = target;
 
     return NextResponse.json({
